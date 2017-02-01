@@ -46,11 +46,20 @@ import System.Timeout (timeout)
 -- body.
 --
 -- Since 0.1.0
+
+traceOnException :: String -> IO a -> IO a
+traceOnException msg action = action `Control.Exception.catch` \(e :: SomeException) -> do
+    putStrLn $ msg ++ ": " ++ show e
+    throwIO e
+
+traceShowOnException :: Show a => String -> a -> IO b -> IO b
+traceShowOnException msg f = traceOnException (msg ++ ": " ++ show f)
+
 withResponse :: Request
              -> Manager
              -> (Response BodyReader -> IO a)
              -> IO a
-withResponse req man f = bracket (responseOpen req man) responseClose f
+withResponse req man f = bracket (responseOpen req man) responseClose (\x -> traceShowOnException "withResponse" req $ f x)
 
 -- | A convenience wrapper around 'withResponse' which reads in the entire
 -- response body and immediately closes the connection. Note that this function
@@ -60,7 +69,7 @@ withResponse req man f = bracket (responseOpen req man) responseClose f
 --
 -- Since 0.1.0
 httpLbs :: Request -> Manager -> IO (Response L.ByteString)
-httpLbs req man = withResponse req man $ \res -> do
+httpLbs req man = withResponse req man $ \res -> traceOnException "httpLbs" $ do
     bss <- brConsume $ responseBody res
     return res { responseBody = L.fromChunks bss }
 
@@ -69,7 +78,7 @@ httpLbs req man = withResponse req man $ \res -> do
 --
 -- Since 0.3.2
 httpNoBody :: Request -> Manager -> IO (Response ())
-httpNoBody req man = withResponse req man $ return . void
+httpNoBody req man = withResponse req man $ (traceOnException "httpNoBody" . return . void)
 
 
 -- | Get a 'Response' without any redirect following.
@@ -86,7 +95,7 @@ httpRaw'
      :: Request
      -> Manager
      -> IO (Request, Response BodyReader)
-httpRaw' req0 m = do
+httpRaw' req0 m = traceShowOnException "httpRaw'" req0 $ do
     let req' = mSetProxy m req0
     (req, cookie_jar') <- case cookieJar req' of
         Just cj -> do
@@ -122,7 +131,7 @@ httpRaw' req0 m = do
                 return (req, res {responseCookieJar = cookie_jar})
             Nothing -> return (req, res)
   where
-    getConnectionWrapper mtimeout f =
+    getConnectionWrapper mtimeout f = traceShowOnException "getConnectionWrapper" mtimeout $
         case mtimeout of
             Nothing -> fmap ((,) Nothing) f
             Just timeout' -> do
@@ -156,7 +165,7 @@ httpRaw' req0 m = do
 -- (In case the Manager is overridden by requestManagerOverride, the Request is
 -- being modified by managerModifyRequest of the new Manager, not the old one.)
 getModifiedRequestManager :: Manager -> Request -> IO (Manager, Request)
-getModifiedRequestManager manager0 req0 = do
+getModifiedRequestManager manager0 req0 = traceShowOnException "getModifiedRequestManager" req0 $ do
   let manager = fromMaybe manager0 (requestManagerOverride req0)
   req <- mModifyRequest manager req0
   return (manager, req)
@@ -191,7 +200,7 @@ getModifiedRequestManager manager0 req0 = do
 --
 -- Since 0.1.0
 responseOpen :: Request -> Manager -> IO (Response BodyReader)
-responseOpen inputReq manager' = do
+responseOpen inputReq manager' = traceShowOnException "responseOpen" inputReq $ do
   (manager, req0) <- getModifiedRequestManager manager' inputReq
   wrapExc req0 $ mWrapException manager req0 $ do
     (req, res) <- go manager (redirectCount req0) req0
@@ -203,7 +212,7 @@ responseOpen inputReq manager' = do
     wrapExc :: Request -> IO a -> IO a
     wrapExc req0 = handle $ throwIO . toHttpException req0
 
-    go manager0 count req' = httpRedirect'
+    go manager0 count req' = traceOnException "go (responseopen)" $ httpRedirect'
       count
       (\req -> do
         (manager, modReq) <- getModifiedRequestManager manager0 req
@@ -235,7 +244,7 @@ httpRedirect'
      -> (Request -> IO (Response BodyReader, Request, Bool)) -- ^ function which performs a request and returns a response, the potentially modified request, and a Bool indicating if there was a redirect.
      -> Request
      -> IO (Request, Response BodyReader)
-httpRedirect' count0 http' req0 = go count0 req0 []
+httpRedirect' count0 http' req0 = traceShowOnException "httpRedirect'" count0 $  go count0 req0 []
   where
     go count _ ress | count < 0 = throwHttp $ TooManyRedirects ress
     go count req' ress = do
@@ -272,4 +281,4 @@ httpRedirect' count0 http' req0 = go count0 req0 []
 --
 -- Since 0.1.0
 responseClose :: Response a -> IO ()
-responseClose = runResponseClose . responseClose'
+responseClose = traceOnException "responseClose" . runResponseClose . responseClose'

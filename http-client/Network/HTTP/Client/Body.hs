@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Network.HTTP.Client.Body
     ( makeChunkedReader
     , makeLengthReader
@@ -15,13 +16,22 @@ module Network.HTTP.Client.Body
 
 import Network.HTTP.Client.Connection
 import Network.HTTP.Client.Types
-import Control.Exception (assert)
+import Control.Exception
 import Data.ByteString (empty, uncons)
 import Data.IORef
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 import Control.Monad (unless, when)
 import qualified Data.Streaming.Zlib as Z
+
+traceOnException :: String -> IO a -> IO a
+traceOnException msg action = action `Control.Exception.catch` \(e :: SomeException) -> do
+    putStrLn $ msg ++ ": " ++ show e
+    throwIO e
+
+traceShowOnException :: Show a => String -> a -> IO b -> IO b
+traceShowOnException msg f = traceOnException (msg ++ ": " ++ show f)
+
 
 -- ^ Get a single chunk of data from the response body, or an empty
 -- bytestring if no more data is available.
@@ -32,14 +42,14 @@ import qualified Data.Streaming.Zlib as Z
 --
 -- Since 0.1.0
 brRead :: BodyReader -> IO S.ByteString
-brRead = id
+brRead = traceOnException "brRead"
 
 -- | Continuously call 'brRead', building up a lazy ByteString until a chunk is
 -- constructed that is at least as many bytes as requested.
 --
 -- Since 0.4.20
 brReadSome :: BodyReader -> Int -> IO L.ByteString
-brReadSome brRead' =
+brReadSome brRead' = traceOnException "brReadSome" .
     loop id
   where
     loop front rem'
@@ -54,7 +64,7 @@ brEmpty :: BodyReader
 brEmpty = return S.empty
 
 constBodyReader :: [S.ByteString] -> IO BodyReader
-constBodyReader input = do
+constBodyReader input = traceOnException "constBodyReader" $ do
   iinput <- newIORef input
   return $ atomicModifyIORef iinput $ \input' ->
         case input' of
@@ -62,7 +72,7 @@ constBodyReader input = do
             x:xs -> (xs, x)
 
 brAddCleanup :: IO () -> BodyReader -> BodyReader
-brAddCleanup cleanup brRead' = do
+brAddCleanup cleanup brRead' = traceOnException "brAddCleanup" $ do
     bs <- brRead'
     when (S.null bs) cleanup
     return bs
@@ -71,7 +81,7 @@ brAddCleanup cleanup brRead' = do
 --
 -- Since 0.1.0
 brConsume :: BodyReader -> IO [S.ByteString]
-brConsume brRead' =
+brConsume brRead' = traceOnException "brConsume" $
     go id
   where
     go front = do
@@ -81,7 +91,7 @@ brConsume brRead' =
             else go (front . (x:))
 
 makeGzipReader :: BodyReader -> IO BodyReader
-makeGzipReader brRead' = do
+makeGzipReader brRead' = traceOnException "makeGzipReader" $ do
     inf <- Z.initInflate $ Z.WindowBits 31
     istate <- newIORef Nothing
     let goPopper popper = do
@@ -112,7 +122,7 @@ makeGzipReader brRead' = do
             Just popper -> goPopper popper
 
 makeUnlimitedReader :: Connection -> IO BodyReader
-makeUnlimitedReader Connection {..} = do
+makeUnlimitedReader Connection {..} = traceOnException "makeUnlimitedReader" $ do
     icomplete <- newIORef False
     return $ do
         bs <- connectionRead
@@ -120,7 +130,7 @@ makeUnlimitedReader Connection {..} = do
         return bs
 
 makeLengthReader :: Int -> Connection -> IO BodyReader
-makeLengthReader count0 Connection {..} = do
+makeLengthReader count0 Connection {..} = traceOnException "makeLengthReader" $ do
     icount <- newIORef count0
     return $ do
         count <- readIORef icount
@@ -145,7 +155,7 @@ makeLengthReader count0 Connection {..} = do
 makeChunkedReader :: Bool -- ^ raw
                   -> Connection
                   -> IO BodyReader
-makeChunkedReader raw conn@Connection {..} = do
+makeChunkedReader raw conn@Connection {..} = traceOnException "makeChunkedReader" $ do
     icount <- newIORef 0
     return $ go icount
   where

@@ -24,20 +24,28 @@ import qualified Data.ByteString as S
 import Data.Word (Word8)
 import Data.Function (fix)
 
+traceOnException :: String -> IO a -> IO a
+traceOnException msg action = action `E.catch` \(e :: E.SomeException) -> do
+    putStrLn $ msg ++ ": " ++ show e
+    E.throwIO e
+
+traceShowOnException :: Show a => String -> a -> IO b -> IO b
+traceShowOnException msg f = traceOnException (msg ++ ": " ++ show f)
+
 connectionReadLine :: Connection -> IO ByteString
-connectionReadLine conn = do
+connectionReadLine conn = traceOnException "connectionReadLine" $ do
     bs <- connectionRead conn
     when (S.null bs) $ throwHttp IncompleteHeaders
     connectionReadLineWith conn bs
 
 -- | Keep dropping input until a blank line is found.
 connectionDropTillBlankLine :: Connection -> IO ()
-connectionDropTillBlankLine conn = fix $ \loop -> do
+connectionDropTillBlankLine conn = fix $ \loop -> traceOnException "connectionDropTillBlankLine" $ do
     bs <- connectionReadLine conn
     unless (S.null bs) loop
 
 connectionReadLineWith :: Connection -> ByteString -> IO ByteString
-connectionReadLineWith conn bs0 =
+connectionReadLineWith conn bs0 = traceOnException "connectionReadLineWith" $
     go bs0 id 0
   where
     go bs front total =
@@ -65,7 +73,7 @@ killCR bs
 -- | For testing
 dummyConnection :: [ByteString] -- ^ input
                 -> IO (Connection, IO [ByteString], IO [ByteString]) -- ^ conn, output, input
-dummyConnection input0 = do
+dummyConnection input0 = traceOnException "dummyConnection" $ do
     iinput <- newIORef input0
     ioutput <- newIORef []
     return (Connection
@@ -85,7 +93,7 @@ makeConnection :: IO ByteString -- ^ read
                -> (ByteString -> IO ()) -- ^ write
                -> IO () -- ^ close
                -> IO Connection
-makeConnection r w c = do
+makeConnection r w c = traceOnException "makeConnection" $ do
     istack <- newIORef []
 
     -- it is necessary to make sure we never read from or write to
@@ -126,7 +134,7 @@ makeConnection r w c = do
 socketConnection :: Socket
                  -> Int -- ^ chunk size
                  -> IO Connection
-socketConnection socket chunksize = makeConnection
+socketConnection socket chunksize = traceOnException "socketConnection" $ makeConnection
     (recv socket chunksize)
     (sendAll socket)
     (NS.close socket)
@@ -144,7 +152,7 @@ openSocketConnectionSize :: (Socket -> IO ())
                          -> String -- ^ host
                          -> Int -- ^ port
                          -> IO Connection
-openSocketConnectionSize tweakSocket chunksize hostAddress' host' port' = do
+openSocketConnectionSize tweakSocket chunksize hostAddress' host' port' = traceOnException "openSocketConnectionSize" $ do
     let hints = NS.defaultHints {
                           NS.addrFlags = [NS.AI_ADDRCONFIG]
                         , NS.addrSocketType = NS.Stream

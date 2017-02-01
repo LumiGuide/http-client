@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE ViewPatterns      #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Network.HTTP.Client.Headers
     ( parseStatusHeaders
     ) where
@@ -14,6 +15,7 @@ import           Network.HTTP.Client.Connection
 import           Network.HTTP.Client.Types
 import           Network.HTTP.Client.Util       (timeout)
 import           Network.HTTP.Types
+import Control.Exception
 import Data.Word (Word8)
 
 charSpace, charColon, charPeriod :: Word8
@@ -21,11 +23,19 @@ charSpace = 32
 charColon = 58
 charPeriod = 46
 
+traceOnException :: String -> IO a -> IO a
+traceOnException msg action = action `Control.Exception.catch` \(e :: SomeException) -> do
+    putStrLn $ msg ++ ": " ++ show e
+    throwIO e
+
+traceShowOnException :: Show a => String -> a -> IO b -> IO b
+traceShowOnException msg f = traceOnException (msg ++ ": " ++ show f)
+
 
 parseStatusHeaders :: Connection -> Maybe Int -> Maybe (IO ()) -> IO StatusHeaders
 parseStatusHeaders conn timeout' cont
-    | Just k <- cont = getStatusExpectContinue k
-    | otherwise      = getStatus
+    | Just k <- cont = traceOnException "parseStatusHeaders" $ getStatusExpectContinue k
+    | otherwise      = traceOnException "parseStatusHeaders" $ getStatus
   where
     withTimeout = case timeout' of
         Nothing -> id

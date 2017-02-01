@@ -57,6 +57,15 @@ import Control.Concurrent.MVar (MVar, takeMVar, tryPutMVar, newEmptyMVar)
 import System.Environment (getEnvironment)
 import qualified Network.URI as U
 import Control.Monad (guard)
+import Control.Exception
+
+traceOnException :: String -> IO a -> IO a
+traceOnException msg action = action `Control.Exception.catch` \(e :: SomeException) -> do
+    putStrLn $ msg ++ ": " ++ show e
+    throwIO e
+
+traceShowOnException :: Show a => String -> a -> IO b -> IO b
+traceShowOnException msg f = traceOnException (msg ++ ": " ++ show f)
 
 -- | A value for the @managerRawConnection@ setting, but also allows you to
 -- modify the underlying @Socket@ to set additional settings. For a motivating
@@ -65,14 +74,14 @@ import Control.Monad (guard)
 -- Since 0.3.8
 rawConnectionModifySocket :: (NS.Socket -> IO ())
                           -> IO (Maybe NS.HostAddress -> String -> Int -> IO Connection)
-rawConnectionModifySocket = return . openSocketConnection
+rawConnectionModifySocket = traceOnException "rawConnectionModifySocket" . return . openSocketConnection
 
 -- | Same as @rawConnectionModifySocket@, but also takes in a chunk size.
 --
 -- @since 0.5.2
 rawConnectionModifySocketSize :: (NS.Socket -> IO ())
                               -> IO (Int -> Maybe NS.HostAddress -> String -> Int -> IO Connection)
-rawConnectionModifySocketSize = return . openSocketConnectionSize
+rawConnectionModifySocketSize = traceOnException "rawConnectionModifySocketSize" . return . openSocketConnectionSize
 
 
 -- | Default value for @ManagerSettings@.
@@ -116,7 +125,7 @@ defaultManagerSettings = ManagerSettings
     }
 
 takeSocket :: Manager -> ConnKey -> IO (Maybe Connection)
-takeSocket man key =
+takeSocket man key = traceShowOnException "takeSocket" key $
     I.atomicModifyIORef (mConns man) go
   where
     go ManagerClosed = (ManagerClosed, Nothing)
@@ -131,7 +140,7 @@ takeSocket man key =
                  in mc `seq` (mc, Just a)
 
 putSocket :: Manager -> ConnKey -> Connection -> IO ()
-putSocket man key ci = do
+putSocket man key ci = traceOnException "putSocket" $ do
     now <- getCurrentTime
     join $ I.atomicModifyIORef (mConns man) (go now)
     void $ tryPutMVar (mConnsBaton man) ()
@@ -170,7 +179,7 @@ addToList now maxCount x l@(Cons _ currCount _ _)
 --
 -- Since 0.1.0
 newManager :: ManagerSettings -> IO Manager
-newManager ms = do
+newManager ms = traceOnException "newManager" $ do
     NS.withSocketsDo $ return ()
     rawConnection <- managerRawConnection ms
     tlsConnection <- managerTlsConnection ms
@@ -205,7 +214,7 @@ newManager ms = do
 
 -- | Collect and destroy any stale connections.
 reap :: MVar () -> Weak (I.IORef ConnsMap) -> IO ()
-reap baton wmapRef =
+reap baton wmapRef = traceOnException "reap" $
     mask_ loop
   where
     loop = do
@@ -305,12 +314,12 @@ neFromList xs =
 --
 -- Since 0.1.0
 closeManager :: Manager -> IO ()
-closeManager _ = return ()
+closeManager _ = traceOnException "closeManager" $ return ()
 {-# DEPRECATED closeManager "Manager will be closed for you automatically when no longer in use" #-}
 
 closeManager' :: I.IORef ConnsMap
               -> IO ()
-closeManager' connsRef = mask_ $ do
+closeManager' connsRef = traceOnException "closeManager'" $ mask_ $ do
     !m <- I.atomicModifyIORef connsRef $ \x -> (ManagerClosed, x)
     case m of
         ManagerClosed -> return ()
@@ -339,7 +348,7 @@ getManagedConn
     -> IO Connection
     -> IO (ConnRelease, Connection, ManagedConn)
 -- We want to avoid any holes caused by async exceptions, so let's mask.
-getManagedConn man key open = mask $ \restore -> do
+getManagedConn man key open = mask $ \restore -> traceOnException "getManagedConn" $ do
     -- Try to take the socket out of the manager.
     mci <- takeSocket man key
     (ci, isManaged) <-
@@ -400,7 +409,7 @@ getConn req m
     -- Stop Mac OS X from getting high:
     -- https://github.com/snoyberg/http-client/issues/40#issuecomment-39117909
     | S8.null h = throwHttp $ InvalidDestinationHost h
-    | otherwise =
+    | otherwise = traceOnException "getConn" $
         getManagedConn m (ConnKey connKeyHost connport (host req) (port req) (secure req)) $
             wrapConnectExc $ go connaddr connhost connport
   where
@@ -496,7 +505,7 @@ data EnvHelper = EHFromRequest
                | EHUseProxy Proxy
 
 envHelper :: Text -> EnvHelper -> IO (Request -> Request)
-envHelper name eh = do
+envHelper name eh = traceShowOnException "envHelper" name $ do
     env <- getEnvironment
     let lenv = Map.fromList $ map (first $ T.toLower . T.pack) env
         lookupEnvVar n = lookup (T.unpack n) env <|> Map.lookup n lenv

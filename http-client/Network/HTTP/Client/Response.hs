@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Network.HTTP.Client.Response
     ( getRedirectedRequest
     , getResponse
@@ -22,6 +23,15 @@ import Network.HTTP.Client.Request
 import Network.HTTP.Client.Util
 import Network.HTTP.Client.Body
 import Network.HTTP.Client.Headers
+import Control.Exception
+
+traceOnException :: String -> IO a -> IO a
+traceOnException msg action = action `Control.Exception.catch` \(e :: SomeException) -> do
+    putStrLn $ msg ++ ": " ++ show e
+    throwIO e
+
+traceShowOnException :: Show a => String -> a -> IO b -> IO b
+traceShowOnException msg f = traceOnException (msg ++ ": " ++ show f)
 
 -- | If a request is a redirection (status code 3xx) this function will create
 -- a new request from the old request, the server headers returned with the
@@ -71,7 +81,7 @@ getRedirectedRequest req hs cookie_jar code
 -- | Convert a 'Response' that has a 'Source' body to one with a lazy
 -- 'L.ByteString' body.
 lbsResponse :: Response BodyReader -> IO (Response L.ByteString)
-lbsResponse res = do
+lbsResponse res = traceOnException "lbsResponse" $ do
     bss <- brConsume $ responseBody res
     return res
         { responseBody = L.fromChunks bss
@@ -83,7 +93,7 @@ getResponse :: ConnRelease
             -> Connection
             -> Maybe (IO ()) -- ^ Action to run in case of a '100 Continue'.
             -> IO (Response BodyReader)
-getResponse connRelease timeout' req@(Request {..}) conn cont = do
+getResponse connRelease timeout' req@(Request {..}) conn cont = traceOnException "getResponse" $ do
     StatusHeaders s version hs <- parseStatusHeaders conn timeout' cont
     let mcl = lookup "content-length" hs >>= readDec . S8.unpack
         isChunked = ("transfer-encoding", "chunked") `elem` hs

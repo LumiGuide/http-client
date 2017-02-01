@@ -41,6 +41,15 @@ import Data.ByteString (hGetSome)
 import GHC.IO.Handle.Types
 import System.IO                (hWaitForInput, hIsEOF)
 import System.IO.Error          (mkIOError, illegalOperationErrorType)
+import Control.Exception
+
+traceOnException :: String -> IO a -> IO a
+traceOnException msg action = action `Control.Exception.catch` \(e :: SomeException) -> do
+    putStrLn $ msg ++ ": " ++ show e
+    throwIO e
+
+traceShowOnException :: Show a => String -> a -> IO b -> IO b
+traceShowOnException msg f = traceOnException (msg ++ ": " ++ show f)
 
 -- | Like 'hGet', except that a shorter 'ByteString' may be returned
 -- if there are not enough bytes immediately available to satisfy the
@@ -49,7 +58,7 @@ import System.IO.Error          (mkIOError, illegalOperationErrorType)
 hGetSome :: Handle -> Int -> IO S.ByteString
 hGetSome hh i
     | i >  0    = let
-                   loop = do
+                   loop = traceOnException "hGetSome loop" $ do
                      s <- S.hGetNonBlocking hh i
                      if not (S.null s)
                         then return s
