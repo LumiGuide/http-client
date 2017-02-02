@@ -73,8 +73,8 @@ constBodyReader input = traceOnException "constBodyReader" $ do
 
 brAddCleanup :: IO () -> BodyReader -> BodyReader
 brAddCleanup cleanup brRead' = traceOnException "brAddCleanup" $ do
-    bs <- brRead'
-    when (S.null bs) cleanup
+    bs <- traceOnException "brAddCleanup: brRead'" $ brRead'
+    when (S.null bs) (traceOnException "brAddCleanup: cleanup" $ cleanup)
     return bs
 
 -- | Strictly consume all remaining chunks of data from the stream.
@@ -84,8 +84,8 @@ brConsume :: BodyReader -> IO [S.ByteString]
 brConsume brRead' = traceOnException "brConsume" $
     go id
   where
-    go front = do
-        x <- brRead'
+    go front = traceOnException "brConsume: go" $ do
+        x <- traceOnException "brConsume: brRead'" brRead'
         if S.null x
             then return $ front []
             else go (front . (x:))

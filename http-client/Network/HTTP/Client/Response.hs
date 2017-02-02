@@ -100,7 +100,7 @@ getResponse connRelease timeout' req@(Request {..}) conn cont = traceOnException
 
         -- should we put this connection back into the connection manager?
         toPut = Just "close" /= lookup "connection" hs && version > W.HttpVersion 1 0
-        cleanup bodyConsumed = connRelease $ if toPut && bodyConsumed then Reuse else DontReuse
+        cleanup bodyConsumed = traceOnException "getResponse: cleanup" $ connRelease $ if toPut && bodyConsumed then Reuse else DontReuse
 
     body <-
         -- RFC 2616 section 4.4_1 defines responses that must not include a body
